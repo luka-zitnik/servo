@@ -23,8 +23,9 @@ use js::glue::{
 };
 use js::jsapi::HandleId as RawHandleId;
 use js::jsapi::HandleObject as RawHandleObject;
+use js::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use js::jsapi::MutableHandleObject as RawMutableHandleObject;
-use js::jsapi::{AutoIdVector, CallArgs, DOMCallbacks, GetNonCCWObjectGlobal};
+use js::jsapi::{CallArgs, DOMCallbacks, GetNonCCWObjectGlobal};
 use js::jsapi::{Heap, JSAutoRealm, JSContext, JS_FreezeObject};
 use js::jsapi::{JSJitInfo, JSObject, JSTracer, JSWrapObjectCallbacks};
 use js::jsapi::{JS_EnumerateStandardClasses, JS_GetLatin1StringCharsAndLength};
@@ -375,7 +376,7 @@ pub unsafe fn trace_global(tracer: *mut JSTracer, obj: *mut JSObject) {
 pub unsafe extern "C" fn enumerate_global(
     cx: *mut JSContext,
     obj: RawHandleObject,
-    _props: *mut AutoIdVector,
+    _props: RawMutableHandleIdVector,
     _enumerable_only: bool,
 ) -> bool {
     assert!(JS_IsGlobalObject(obj.get()));
@@ -439,6 +440,7 @@ unsafe extern "C" fn wrap(
 unsafe extern "C" fn pre_wrap(
     cx: *mut JSContext,
     _scope: RawHandleObject,
+    _orig_obj: RawHandleObject,
     obj: RawHandleObject,
     _object_passed_to_wrap: RawHandleObject,
     rval: RawMutableHandleObject,
@@ -582,7 +584,7 @@ pub unsafe extern "C" fn generic_lenient_setter(
 }
 
 unsafe extern "C" fn instance_class_has_proto_at_depth(
-    clasp: *const js::jsapi::Class,
+    clasp: *const js::jsapi::JSClass,
     proto_id: u32,
     depth: u32,
 ) -> bool {

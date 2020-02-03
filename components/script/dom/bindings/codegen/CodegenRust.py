@@ -1654,7 +1654,7 @@ class MethodDefiner(PropertyDefiner):
         if any(m.isGetter() and m.isIndexed() for m in methods):
             self.regular.append({"name": '@@iterator',
                                  "methodInfo": False,
-                                 "selfHostedName": "ArrayValues",
+                                 "selfHostedName": "$ArrayValues",
                                  "length": 0,
                                  "flags": "0",  # Not enumerable, per spec.
                                  "condition": "Condition::Satisfied"})
@@ -1678,7 +1678,7 @@ class MethodDefiner(PropertyDefiner):
             self.regular.append({
                 "name": "values",
                 "methodInfo": False,
-                "selfHostedName": "ArrayValues",
+                "selfHostedName": "$ArrayValues",
                 "length": 0,
                 "flags": "JSPROP_ENUMERATE",
                 "condition": PropertyDefiner.getControllingCondition(m,
@@ -1746,21 +1746,23 @@ class MethodDefiner(PropertyDefiner):
                     jitinfo = "0 as *const JSJitInfo"
                     accessor = 'Some(%s)' % m.get("nativeName", m["name"])
             if m["name"].startswith("@@"):
-                return ('(SymbolCode::%s as i32 + 1)'
-                        % m["name"][2:], accessor, jitinfo, m["length"], flags, selfHostedName)
-            return (str_to_const_array(m["name"]), accessor, jitinfo, m["length"], flags, selfHostedName)
+                name = 'JSPropertySpec_Name { symbol_: SymbolCode::%s as usize + 1 }' % m["name"][2:]
+            else:
+                name = ('JSPropertySpec_Name { string_: %s as *const u8 as *const libc::c_char }'
+                        % str_to_const_array(m["name"]))
+            return (name, accessor, jitinfo, m["length"], flags, selfHostedName)
 
         return self.generateGuardedArray(
             array, name,
             '    JSFunctionSpec {\n'
-            '        name: %s as *const u8 as *const libc::c_char,\n'
+            '        name: %s,\n'
             '        call: JSNativeWrapper { op: %s, info: %s },\n'
             '        nargs: %s,\n'
             '        flags: (%s) as u16,\n'
             '        selfHostedName: %s\n'
             '    }',
             '    JSFunctionSpec {\n'
-            '        name: 0 as *const libc::c_char,\n'
+            '        name: JSPropertySpec_Name { string_: ptr::null() },\n'
             '        call: JSNativeWrapper { op: None, info: 0 as *const JSJitInfo },\n'
             '        nargs: 0,\n'
             '        flags: 0,\n'
@@ -1834,14 +1836,14 @@ class AttrDefiner(PropertyDefiner):
         return self.generateGuardedArray(
             array, name,
             '    JSPropertySpec {\n'
-            '        name: %s as *const u8 as *const libc::c_char,\n'
+            '        name: JSPropertySpec_Name { string_: %s as *const u8 as *const libc::c_char },\n'
             '        flags: (%s) as u8,\n'
-            '        __bindgen_anon_1: JSPropertySpec__bindgen_ty_1 {\n'
-            '            accessors: JSPropertySpec__bindgen_ty_1__bindgen_ty_1 {\n'
-            '                getter: JSPropertySpec__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {\n'
+            '        u: JSPropertySpec_AccessorsOrValue {\n'
+            '            accessors: JSPropertySpec_AccessorsOrValue_Accessors {\n'
+            '                getter: JSPropertySpec_Accessor {\n'
             '                    native: %s,\n'
             '                },\n'
-            '                setter: JSPropertySpec__bindgen_ty_1__bindgen_ty_1__bindgen_ty_2 {\n'
+            '                setter: JSPropertySpec_Accessor {\n'
             '                    native: %s,\n'
             '                }\n'
             '            }\n'
@@ -2203,7 +2205,9 @@ static Class: DOMJSClass = DOMJSClass {
                (((%(slots)s) & JSCLASS_RESERVED_SLOTS_MASK) << JSCLASS_RESERVED_SLOTS_SHIFT)
                /* JSCLASS_HAS_RESERVED_SLOTS(%(slots)s) */,
         cOps: &CLASS_OPS,
-        reserved: [0 as *mut _; 3],
+        spec: ptr::null(),
+        ext: ptr::null(),
+        oOps: ptr::null(),
     },
     dom_class: %(domClass)s
 };
@@ -2274,7 +2278,9 @@ static PrototypeClass: JSClass = JSClass {
         // JSCLASS_HAS_RESERVED_SLOTS(%(slotCount)s)
         (%(slotCount)s & JSCLASS_RESERVED_SLOTS_MASK) << JSCLASS_RESERVED_SLOTS_SHIFT,
     cOps: 0 as *const _,
-    reserved: [0 as *mut os::raw::c_void; 3]
+    spec: ptr::null(),
+    ext: ptr::null(),
+    oOps: ptr::null(),
 };
 """ % {'name': name, 'slotCount': slotCount}
 
@@ -5301,7 +5307,7 @@ class CGDOMJSProxyHandler_ownPropertyKeys(CGAbstractExternMethod):
     def __init__(self, descriptor):
         args = [Argument('*mut JSContext', 'cx'),
                 Argument('RawHandleObject', 'proxy'),
-                Argument('*mut AutoIdVector', 'props')]
+                Argument('RawMutableHandleIdVector', 'props')]
         CGAbstractExternMethod.__init__(self, descriptor, "own_property_keys", "bool", args)
         self.descriptor = descriptor
 
@@ -5318,7 +5324,7 @@ class CGDOMJSProxyHandler_ownPropertyKeys(CGAbstractExternMethod):
                 for i in 0..(*unwrapped_proxy).Length() {
                     rooted!(in(*cx) let mut rooted_jsid: jsid);
                     int_to_jsid(i as i32, rooted_jsid.handle_mut());
-                    AppendToAutoIdVector(props, rooted_jsid.handle());
+                    AppendToIdVector(props, rooted_jsid.handle());
                 }
                 """)
 
@@ -5331,7 +5337,7 @@ class CGDOMJSProxyHandler_ownPropertyKeys(CGAbstractExternMethod):
                     rooted!(in(*cx) let rooted = jsstring);
                     rooted!(in(*cx) let mut rooted_jsid: jsid);
                     RUST_INTERNED_STRING_TO_JSID(*cx, rooted.handle().get(), rooted_jsid.handle_mut());
-                    AppendToAutoIdVector(props, rooted_jsid.handle());
+                    AppendToIdVector(props, rooted_jsid.handle());
                 }
                 """)
 
@@ -5359,7 +5365,7 @@ class CGDOMJSProxyHandler_getOwnEnumerablePropertyKeys(CGAbstractExternMethod):
                 descriptor.interface.getExtendedAttribute("LegacyUnenumerableNamedProperties"))
         args = [Argument('*mut JSContext', 'cx'),
                 Argument('RawHandleObject', 'proxy'),
-                Argument('*mut AutoIdVector', 'props')]
+                Argument('RawMutableHandleIdVector', 'props')]
         CGAbstractExternMethod.__init__(self, descriptor,
                                         "getOwnEnumerablePropertyKeys", "bool", args)
         self.descriptor = descriptor
@@ -5377,7 +5383,7 @@ class CGDOMJSProxyHandler_getOwnEnumerablePropertyKeys(CGAbstractExternMethod):
                 for i in 0..(*unwrapped_proxy).Length() {
                     rooted!(in(*cx) let mut rooted_jsid: jsid);
                     int_to_jsid(i as i32, rooted_jsid.handle_mut());
-                    AppendToAutoIdVector(props, rooted_jsid.handle());
+                    AppendToIdVector(props, rooted_jsid.handle());
                 }
                 """)
 
@@ -5907,11 +5913,9 @@ def generate_imports(config, cgthings, descriptors, callbacks=None, dictionaries
         'js::JS_CALLEE',
         'js::error::throw_type_error',
         'js::error::throw_internal_error',
-        'js::jsapi::AutoIdVector',
         'js::rust::wrappers::Call',
         'js::jsapi::CallArgs',
         'js::jsapi::CurrentGlobalOrNull',
-        'js::jsapi::FreeOp',
         'js::rust::wrappers::GetPropertyKeys',
         'js::jsapi::GetWellKnownSymbol',
         'js::rust::Handle',
@@ -5950,10 +5954,10 @@ def generate_imports(config, cgthings, descriptors, callbacks=None, dictionaries
         'js::jsapi::JSPROP_PERMANENT',
         'js::jsapi::JSPROP_READONLY',
         'js::jsapi::JSPropertySpec',
-        'js::jsapi::JSPropertySpec__bindgen_ty_1',
-        'js::jsapi::JSPropertySpec__bindgen_ty_1__bindgen_ty_1',
-        'js::jsapi::JSPropertySpec__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1',
-        'js::jsapi::JSPropertySpec__bindgen_ty_1__bindgen_ty_1__bindgen_ty_2',
+        'js::jsapi::JSPropertySpec_Accessor',
+        'js::jsapi::JSPropertySpec_AccessorsOrValue',
+        'js::jsapi::JSPropertySpec_AccessorsOrValue_Accessors',
+        'js::jsapi::JSPropertySpec_Name',
         'js::jsapi::JSString',
         'js::jsapi::JSTracer',
         'js::jsapi::JSType',
@@ -5995,6 +5999,7 @@ def generate_imports(config, cgthings, descriptors, callbacks=None, dictionaries
         'js::jsapi::MutableHandleObject as RawMutableHandleObject',
         'js::rust::MutableHandleValue',
         'js::jsapi::MutableHandleValue as RawMutableHandleValue',
+        'js::jsapi::MutableHandleIdVector as RawMutableHandleIdVector',
         'js::jsapi::ObjectOpResult',
         'js::jsapi::PropertyDescriptor',
         'js::jsapi::Rooted',
@@ -6010,7 +6015,7 @@ def generate_imports(config, cgthings, descriptors, callbacks=None, dictionaries
         'js::jsval::PrivateValue',
         'js::jsval::UndefinedValue',
         'js::jsapi::UndefinedHandleValue',
-        'js::rust::wrappers::AppendToAutoIdVector',
+        'js::rust::wrappers::AppendToIdVector',
         'js::glue::CallJitGetterOp',
         'js::glue::CallJitMethodOp',
         'js::glue::CallJitSetterOp',

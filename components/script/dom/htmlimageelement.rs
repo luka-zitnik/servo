@@ -166,20 +166,23 @@ impl HTMLImageElement {
     }
     // https://html.spec.whatwg.org/multipage/#check-the-usability-of-the-image-argument
     pub fn is_usable(&self) -> Fallible<bool> {
-        // If image has an intrinsic width or intrinsic height (or both) equal to zero, then return bad.
-        match &self.current_request.borrow().image {
-            Some(image) => {
-                if image.width == 0 || image.height == 0 {
-                    return Ok(false);
-                }
-            },
-            None => return Ok(false),
-        }
-
-        match self.current_request.borrow().state {
+        let request = self.current_request.borrow();
+        match request.state {
             // If image's current request's state is broken, then throw an "InvalidStateError" DOMException.
             State::Broken => Err(Error::InvalidState),
-            State::CompletelyAvailable => Ok(true),
+            State::CompletelyAvailable => {
+                match request.image {
+                    Some(ref image) => {
+                        // If image has an intrinsic width or intrinsic height (or both) equal to zero, then return bad.
+                        if image.width == 0 || image.height == 0 {
+                            Ok(false)
+                        } else {
+                            Ok(true)
+                        }
+                    },
+                    None => Ok(false),
+                }
+            },
             // If image is not fully decodable, then return bad.
             State::PartiallyAvailable | State::Unavailable => Ok(false),
         }

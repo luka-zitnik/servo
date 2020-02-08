@@ -13,7 +13,7 @@ use crate::dom::bindings::codegen::Bindings::HTMLImageElementBinding::HTMLImageE
 use crate::dom::bindings::codegen::Bindings::MouseEventBinding::MouseEventMethods;
 use crate::dom::bindings::codegen::Bindings::NodeBinding::NodeBinding::NodeMethods;
 use crate::dom::bindings::codegen::Bindings::WindowBinding::WindowMethods;
-use crate::dom::bindings::error::Fallible;
+use crate::dom::bindings::error::{Error, Fallible};
 use crate::dom::bindings::inheritance::Castable;
 use crate::dom::bindings::refcounted::Trusted;
 use crate::dom::bindings::reflector::DomObject;
@@ -163,6 +163,29 @@ pub struct HTMLImageElement {
 impl HTMLImageElement {
     pub fn get_url(&self) -> Option<ServoUrl> {
         self.current_request.borrow().parsed_url.clone()
+    }
+    // https://html.spec.whatwg.org/multipage/#check-the-usability-of-the-image-argument
+    pub fn is_usable(&self) -> Fallible<bool> {
+        let request = self.current_request.borrow();
+        match request.state {
+            // If image's current request's state is broken, then throw an "InvalidStateError" DOMException.
+            State::Broken => Err(Error::InvalidState),
+            State::CompletelyAvailable => {
+                match request.image {
+                    Some(ref image) => {
+                        // If image has an intrinsic width or intrinsic height (or both) equal to zero, then return bad.
+                        if image.width == 0 || image.height == 0 {
+                            Ok(false)
+                        } else {
+                            Ok(true)
+                        }
+                    },
+                    None => Ok(false),
+                }
+            },
+            // If image is not fully decodable, then return bad.
+            State::PartiallyAvailable | State::Unavailable => Ok(false),
+        }
     }
 }
 
